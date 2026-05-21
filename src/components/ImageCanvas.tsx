@@ -25,6 +25,7 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
   const viewerRef = useRef<OpenSeadragon.Viewer | null>(null)
   const polyMapRef = useRef<Map<number, SVGPolygonElement>>(new Map())
   const labelMapRef = useRef<Map<number, SVGTextElement>>(new Map())
+  const tagDotMapRef = useRef<Map<number, SVGGElement>>(new Map())
   const selRef = useRef<number | null>(selectedLineId)
   const linesRef = useRef<CanonicalLine[]>([])
   const lineEvalsRef = useRef<Record<string, LineEval>>(lineEvals)
@@ -41,11 +42,12 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
     updateStyles()
   }, [selectedLineId])
 
-  // Update polygon colors when evals or tags change
+  // Update polygon colors and tag dots when evals or tags change
   useEffect(() => {
     lineEvalsRef.current = lineEvals
     tagBankRef.current = tagBank
     updateStyles()
+    if (viewerRef.current) repositionTagDots(viewerRef.current)
   }, [lineEvals, tagBank])
 
   function updateStyles() {
@@ -59,18 +61,48 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
         return
       }
       const eval_ = lineEvalsRef.current[String(id)]
-      const firstTagId = eval_?.tags?.[0]
-      const tag = firstTagId ? tagBankRef.current.find(t => t.id === firstTagId) : undefined
-      if (tag) {
-        // Tagged: fill with tag color at 35% opacity, stroke solid
-        poly.setAttribute('fill', hexToRgba(tag.color, 0.35))
-        poly.setAttribute('stroke', tag.color)
-      } else {
-        poly.setAttribute('fill', LINE_COLOR)
-        poly.setAttribute('stroke', LINE_STROKE)
-      }
+      poly.setAttribute('fill', LINE_COLOR)
+      poly.setAttribute('stroke', LINE_STROKE)
       poly.setAttribute('stroke-width', '1.5')
       poly.setAttribute('stroke-dasharray', eval_?.noteworthy ? '6 3' : 'none')
+    })
+    updateTagDots()
+  }
+
+  function updateTagDots() {
+    tagDotMapRef.current.forEach((group, id) => {
+      while (group.firstChild) group.removeChild(group.firstChild)
+      const tagIds = lineEvalsRef.current[String(id)]?.tags ?? []
+      tagIds.forEach(tagId => {
+        const tag = tagBankRef.current.find(t => t.id === tagId)
+        if (!tag) return
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+        circle.setAttribute('r', '5')
+        circle.setAttribute('fill', tag.color)
+        circle.setAttribute('stroke', 'rgba(0,0,0,0.4)')
+        circle.setAttribute('stroke-width', '1')
+        circle.style.pointerEvents = 'none'
+        group.appendChild(circle)
+      })
+    })
+  }
+
+  function repositionTagDots(viewer: OpenSeadragon.Viewer) {
+    if (!viewer.viewport) return
+    const vp = viewer.viewport
+    linesRef.current.forEach(line => {
+      if (!line.boundary) return
+      const group = tagDotMapRef.current.get(line.id)
+      if (!group) return
+      const minX = Math.min(...line.boundary.map(([x]) => x))
+      const minY = Math.min(...line.boundary.map(([, y]) => y))
+      const vpt = vp.imageToViewportCoordinates(new OpenSeadragon.Point(minX, minY))
+      const el = vp.viewportToViewerElementCoordinates(vpt)
+      const circles = Array.from(group.children) as SVGCircleElement[]
+      circles.forEach((circle, i) => {
+        circle.setAttribute('cx', String(el.x + 5 + i * 12))
+        circle.setAttribute('cy', String(el.y + 5))
+      })
     })
   }
 
@@ -78,10 +110,10 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
     const svg = svgRef.current
     if (!svg) return
 
-    // Clear
     while (svg.firstChild) svg.removeChild(svg.firstChild)
     polyMapRef.current.clear()
     labelMapRef.current.clear()
+    tagDotMapRef.current.clear()
 
     lines.forEach(line => {
       if (!line.boundary) return
@@ -103,6 +135,11 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
       label.textContent = String(line.id)
       svg.appendChild(label)
       labelMapRef.current.set(line.id, label)
+
+      const group = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      group.style.pointerEvents = 'none'
+      svg.appendChild(group)
+      tagDotMapRef.current.set(line.id, group)
     })
   }
 
@@ -142,6 +179,7 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
     })
 
     updateStyles()
+    repositionTagDots(viewer)
   }
 
   // Initialize / reinitialize OSD when image changes
@@ -224,13 +262,6 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
       )}
     </div>
   )
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 function pointInPolygon(x: number, y: number, polygon: [number, number][]): boolean {
