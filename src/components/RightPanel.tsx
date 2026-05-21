@@ -1,0 +1,277 @@
+import { useState } from 'react'
+import type { CanonicalPage, EvalStore, Tag, LineEval, PageEval } from '../types'
+import { getLineEval, getPageEval, emptyLineEval } from '../types'
+
+interface Props {
+  folioStems: string[]
+  currentIdx: number
+  page: CanonicalPage | null
+  store: EvalStore
+  selectedLineId: number | null
+  onGoto: (idx: number) => void
+  onSelectLine: (id: number | null) => void
+  onUpdateLineEval: (lineId: number, patch: Partial<LineEval>) => void
+  onUpdatePageComment: (comment: string) => void
+  onMarkComplete: () => void
+  onExportCSV: () => void
+  onExportJSON: () => void
+}
+
+export function RightPanel({
+  folioStems,
+  currentIdx,
+  page,
+  store,
+  selectedLineId,
+  onGoto,
+  onSelectLine,
+  onUpdateLineEval,
+  onUpdatePageComment,
+  onMarkComplete,
+  onExportCSV,
+  onExportJSON,
+}: Props) {
+  const folio = page?.folio ?? null
+  const pageEval: PageEval = folio ? getPageEval(store, folio) : { status: 'untouched', comment: '', completedAt: null, lines: {} }
+  const lineEval: LineEval = (folio && selectedLineId !== null) ? getLineEval(store, folio, selectedLineId) : emptyLineEval()
+
+  const totalLines = page?.lines.length ?? 0
+  const evaluatedCount = Object.values(pageEval.lines).filter(l => l.tags.length > 0 || l.comment).length
+
+  const statusIcon = (stem: string) => {
+    const s = store.pages[stem]?.status
+    if (s === 'complete') return '✓'
+    if (s === 'in_progress') return '•'
+    return '○'
+  }
+  const statusColor = (stem: string) => {
+    const s = store.pages[stem]?.status
+    if (s === 'complete') return 'text-green-400'
+    if (s === 'in_progress') return 'text-yellow-400'
+    return 'text-gray-500'
+  }
+
+  return (
+    <div className="w-72 flex flex-col bg-gray-800 border-l border-gray-700 shrink-0 overflow-hidden">
+      <div className="flex-1 overflow-y-auto p-3 space-y-4">
+
+        {/* Page navigator */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Folio</h3>
+          <div className="flex items-center gap-1 mb-2">
+            <button
+              onClick={() => onGoto(Math.max(0, currentIdx - 1))}
+              disabled={currentIdx <= 0}
+              className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-30 text-gray-200 rounded"
+            >
+              ‹
+            </button>
+            <span className="flex-1 text-center text-xs text-gray-300 truncate px-1">
+              {folioStems[currentIdx] ?? '—'}
+            </span>
+            <button
+              onClick={() => onGoto(Math.min(folioStems.length - 1, currentIdx + 1))}
+              disabled={currentIdx >= folioStems.length - 1}
+              className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-30 text-gray-200 rounded"
+            >
+              ›
+            </button>
+          </div>
+          <select
+            className="w-full text-xs bg-gray-700 border border-gray-600 text-gray-200 rounded px-2 py-1.5"
+            value={currentIdx}
+            onChange={e => onGoto(Number(e.target.value))}
+          >
+            {folioStems.map((stem, i) => (
+              <option key={stem} value={i}>
+                {statusIcon(stem)} {stem}
+              </option>
+            ))}
+          </select>
+          {/* Status dots legend */}
+          <div className="flex gap-3 mt-1.5 text-xs">
+            <span className="text-green-400">✓ complete</span>
+            <span className="text-yellow-400">• in progress</span>
+            <span className="text-gray-500">○ untouched</span>
+          </div>
+        </section>
+
+        {/* Line judgment panel */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+            Line judgment
+            {selectedLineId !== null && (
+              <span className="ml-1 text-gray-500 normal-case font-normal">
+                — line {selectedLineId}
+              </span>
+            )}
+          </h3>
+
+          {selectedLineId === null ? (
+            <p className="text-xs text-gray-500 italic">Click a line on the image to evaluate it.</p>
+          ) : (
+            <div className="space-y-2">
+              <TagPicker
+                tags={store.tagBank.filter(t => !t.archived)}
+                selected={lineEval.tags}
+                onChange={tags => onUpdateLineEval(selectedLineId, { tags })}
+              />
+
+              <textarea
+                value={lineEval.comment}
+                onChange={e => onUpdateLineEval(selectedLineId, { comment: e.target.value })}
+                placeholder="Comment on this line…"
+                rows={3}
+                className="w-full text-xs bg-gray-700 border border-gray-600 text-gray-200 rounded px-2 py-1.5 resize-none placeholder-gray-500 focus:outline-none focus:border-purple-500"
+              />
+
+              <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={lineEval.noteworthy}
+                  onChange={e => onUpdateLineEval(selectedLineId, { noteworthy: e.target.checked })}
+                  className="accent-purple-400"
+                />
+                Noteworthy ★
+              </label>
+
+              <button
+                onClick={() => onSelectLine(null)}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                Deselect line
+              </button>
+            </div>
+          )}
+        </section>
+
+        {/* Page comment */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Page comment</h3>
+          <textarea
+            value={pageEval.comment}
+            onChange={e => onUpdatePageComment(e.target.value)}
+            placeholder="Notes about this page…"
+            rows={3}
+            className="w-full text-xs bg-gray-700 border border-gray-600 text-gray-200 rounded px-2 py-1.5 resize-none placeholder-gray-500 focus:outline-none focus:border-purple-500"
+          />
+        </section>
+
+        {/* Page summary */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Page summary</h3>
+          <div className="space-y-1 text-xs text-gray-300 mb-3">
+            <div className="flex justify-between">
+              <span>Lines evaluated</span>
+              <span>{evaluatedCount} / {totalLines}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Status</span>
+              <span className={statusColor(folio ?? '')}>
+                {pageEval.status}
+              </span>
+            </div>
+            {/* Tag breakdown */}
+            {store.tagBank.filter(t => !t.archived).map(tag => {
+              const count = Object.values(pageEval.lines).filter(l => l.tags.includes(tag.id)).length
+              if (count === 0) return null
+              return (
+                <div key={tag.id} className="flex justify-between">
+                  <span style={{ color: tag.color }}>{tag.name}</span>
+                  <span>{count}</span>
+                </div>
+              )
+            })}
+          </div>
+
+          <button
+            onClick={onMarkComplete}
+            className={`w-full py-1.5 text-xs rounded font-medium transition-colors ${
+              pageEval.status === 'complete'
+                ? 'bg-green-700 hover:bg-green-600 text-white'
+                : 'bg-gray-600 hover:bg-gray-500 text-gray-200'
+            }`}
+          >
+            {pageEval.status === 'complete' ? '✓ Completed' : 'Mark page complete (C)'}
+          </button>
+        </section>
+
+      </div>
+
+      {/* Export footer */}
+      <div className="p-3 border-t border-gray-700 space-y-2">
+        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Export</h3>
+        <div className="flex gap-2">
+          <button
+            onClick={onExportCSV}
+            className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded transition-colors"
+          >
+            Download CSV
+          </button>
+          <button
+            onClick={onExportJSON}
+            className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded transition-colors"
+          >
+            Download JSON
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── TagPicker ─────────────────────────────────────────────────────────────────
+
+interface TagPickerProps {
+  tags: Tag[]
+  selected: string[]
+  onChange: (ids: string[]) => void
+}
+
+function TagPicker({ tags, selected, onChange }: TagPickerProps) {
+  const [input, setInput] = useState('')
+
+  const filtered = tags.filter(t =>
+    !input || t.name.toLowerCase().includes(input.toLowerCase()),
+  )
+
+  const toggle = (id: string) => {
+    onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id])
+  }
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1 mb-1.5">
+        {filtered.map(tag => (
+          <button
+            key={tag.id}
+            onClick={() => toggle(tag.id)}
+            className={`px-2 py-0.5 rounded text-xs border transition-colors ${
+              selected.includes(tag.id)
+                ? 'border-transparent text-white'
+                : 'border-gray-600 text-gray-400 bg-gray-700 hover:border-gray-500'
+            }`}
+            style={selected.includes(tag.id) ? { backgroundColor: tag.color, borderColor: tag.color } : {}}
+          >
+            {tag.name}
+          </button>
+        ))}
+      </div>
+      <input
+        value={input}
+        onChange={e => setInput(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && input.trim()) {
+            // Creating new tags is handled via the tag bank manager
+            setInput('')
+          }
+        }}
+        placeholder="Filter tags…"
+        className="w-full text-xs bg-gray-700 border border-gray-600 text-gray-200 rounded px-2 py-1 placeholder-gray-500 focus:outline-none focus:border-purple-500"
+      />
+      {input && filtered.length === 0 && (
+        <p className="text-xs text-gray-500 mt-1">No tags match. Open Tags to create one.</p>
+      )}
+    </div>
+  )
+}
