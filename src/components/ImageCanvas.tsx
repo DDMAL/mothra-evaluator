@@ -79,6 +79,7 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
         circle.setAttribute('r', '5')
         circle.setAttribute('fill', tag.color)
+        circle.setAttribute('opacity', '0.5')
         circle.setAttribute('stroke', 'rgba(0,0,0,0.4)')
         circle.setAttribute('stroke-width', '1')
         circle.style.pointerEvents = 'none'
@@ -101,7 +102,7 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
       const circles = Array.from(group.children) as SVGCircleElement[]
       circles.forEach((circle, i) => {
         circle.setAttribute('cx', String(el.x + 5 + i * 12))
-        circle.setAttribute('cy', String(el.y + 5))
+        circle.setAttribute('cy', String(el.y - 3))
       })
     })
   }
