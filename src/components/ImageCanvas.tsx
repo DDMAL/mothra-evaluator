@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import OpenSeadragon from 'openseadragon'
-import type { CanonicalLine, CanonicalPage } from '../types'
+import type { CanonicalLine, CanonicalPage, LineEval, Tag } from '../types'
 
 interface Props {
   page: CanonicalPage | null
@@ -8,6 +8,8 @@ interface Props {
   isFallbackImage: boolean  // true = visualization JPG with overlays already baked in
   selectedLineId: number | null
   showLabels: boolean
+  lineEvals: Record<string, LineEval>
+  tagBank: Tag[]
   onSelectLine: (id: number | null) => void
 }
 
@@ -17,13 +19,21 @@ const SEL_COLOR = 'rgba(220, 100, 255, 0.40)'
 const SEL_STROKE = 'rgb(240, 140, 255)'
 const LABEL_COLOR = '#e9b8ff'
 
-export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, showLabels, onSelectLine }: Props) {
+export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, showLabels, lineEvals, tagBank, onSelectLine }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const viewerRef = useRef<OpenSeadragon.Viewer | null>(null)
   const polyMapRef = useRef<Map<number, SVGPolygonElement>>(new Map())
   const labelMapRef = useRef<Map<number, SVGTextElement>>(new Map())
   const selRef = useRef<number | null>(selectedLineId)
+  const linesRef = useRef<CanonicalLine[]>([])
+  const lineEvalsRef = useRef<Record<string, LineEval>>(lineEvals)
+  const tagBankRef = useRef<Tag[]>(tagBank)
+
+  // Keep linesRef current so canvas-click handler never uses stale lines
+  useEffect(() => {
+    linesRef.current = page?.lines ?? []
+  }, [page])
 
   // Keep selRef in sync
   useEffect(() => {
@@ -31,12 +41,36 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
     updateStyles()
   }, [selectedLineId])
 
+  // Update polygon colors when evals or tags change
+  useEffect(() => {
+    lineEvalsRef.current = lineEvals
+    tagBankRef.current = tagBank
+    updateStyles()
+  }, [lineEvals, tagBank])
+
   function updateStyles() {
     polyMapRef.current.forEach((poly, id) => {
       const sel = id === selRef.current
-      poly.setAttribute('fill', sel ? SEL_COLOR : LINE_COLOR)
-      poly.setAttribute('stroke', sel ? SEL_STROKE : LINE_STROKE)
-      poly.setAttribute('stroke-width', sel ? '2.5' : '1.5')
+      if (sel) {
+        poly.setAttribute('fill', SEL_COLOR)
+        poly.setAttribute('stroke', SEL_STROKE)
+        poly.setAttribute('stroke-width', '2.5')
+        poly.setAttribute('stroke-dasharray', 'none')
+        return
+      }
+      const eval_ = lineEvalsRef.current[String(id)]
+      const firstTagId = eval_?.tags?.[0]
+      const tag = firstTagId ? tagBankRef.current.find(t => t.id === firstTagId) : undefined
+      if (tag) {
+        // Tagged: fill with tag color at 35% opacity, stroke solid
+        poly.setAttribute('fill', hexToRgba(tag.color, 0.35))
+        poly.setAttribute('stroke', tag.color)
+      } else {
+        poly.setAttribute('fill', LINE_COLOR)
+        poly.setAttribute('stroke', LINE_STROKE)
+      }
+      poly.setAttribute('stroke-width', '1.5')
+      poly.setAttribute('stroke-dasharray', eval_?.noteworthy ? '6 3' : 'none')
     })
   }
 
@@ -119,8 +153,6 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
       viewerRef.current = null
     }
 
-    const lines = page?.lines ?? []
-
     const viewer = OpenSeadragon({
       element: containerRef.current,
       tileSources: { type: 'image', url: imageUrl },
@@ -133,17 +165,17 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
     viewerRef.current = viewer
 
     if (!isFallbackImage) {
-      rebuildOverlay(lines)
+      rebuildOverlay(linesRef.current)
 
-      viewer.addHandler('open', () => repositionOverlay(viewer, lines))
-      viewer.addHandler('update-viewport', () => repositionOverlay(viewer, lines))
-      viewer.addHandler('resize', () => repositionOverlay(viewer, lines))
+      viewer.addHandler('open', () => repositionOverlay(viewer, linesRef.current))
+      viewer.addHandler('update-viewport', () => repositionOverlay(viewer, linesRef.current))
+      viewer.addHandler('resize', () => repositionOverlay(viewer, linesRef.current))
 
       viewer.addHandler('canvas-click', (event: OpenSeadragon.CanvasClickEvent) => {
         if (!event.quick) return
         const imagePoint = viewer.viewport.viewerElementToImageCoordinates(event.position)
         let clickedId: number | null = null
-        for (const line of lines) {
+        for (const line of linesRef.current) {
           if (!line.boundary) continue
           if (pointInPolygon(imagePoint.x, imagePoint.y, line.boundary)) {
             clickedId = line.id
@@ -192,6 +224,13 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
       )}
     </div>
   )
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 function pointInPolygon(x: number, y: number, polygon: [number, number][]): boolean {

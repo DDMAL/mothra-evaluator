@@ -38,12 +38,6 @@ export function RightPanel({
   const totalLines = page?.lines.length ?? 0
   const evaluatedCount = Object.values(pageEval.lines).filter(l => l.tags.length > 0 || l.comment).length
 
-  const statusIcon = (stem: string) => {
-    const s = store.pages[stem]?.status
-    if (s === 'complete') return '✓'
-    if (s === 'in_progress') return '•'
-    return '○'
-  }
   const statusColor = (stem: string) => {
     const s = store.pages[stem]?.status
     if (s === 'complete') return 'text-green-400'
@@ -77,23 +71,33 @@ export function RightPanel({
               ›
             </button>
           </div>
-          <select
-            className="w-full text-xs bg-gray-700 border border-gray-600 text-gray-200 rounded px-2 py-1.5"
-            value={currentIdx}
-            onChange={e => onGoto(Number(e.target.value))}
-          >
-            {folioStems.map((stem, i) => (
-              <option key={stem} value={i}>
-                {statusIcon(stem)} {stem}
-              </option>
-            ))}
-          </select>
-          {/* Status dots legend */}
-          <div className="flex gap-3 mt-1.5 text-xs">
-            <span className="text-green-400">✓ complete</span>
-            <span className="text-yellow-400">• in progress</span>
-            <span className="text-gray-500">○ untouched</span>
-          </div>
+          <ul className="max-h-48 overflow-y-auto rounded border border-gray-600 bg-gray-700 divide-y divide-gray-600/50">
+            {folioStems.map((stem, i) => {
+              const s = store.pages[stem]?.status
+              const dotColor = s === 'complete' ? '#4ade80' : s === 'in_progress' ? '#facc15' : '#6b7280'
+              const icon = s === 'complete' ? '✓' : s === 'in_progress' ? '•' : '○'
+              const isCurrent = i === currentIdx
+              return (
+                <li key={stem}>
+                  <button
+                    onClick={() => onGoto(i)}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 text-left transition-colors ${
+                      isCurrent
+                        ? 'bg-purple-700/50 text-gray-100'
+                        : 'text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: dotColor }}
+                    />
+                    <span className="flex-1 text-xs truncate">{stem}</span>
+                    <span className="text-xs shrink-0" style={{ color: dotColor }}>{icon}</span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
         </section>
 
         {/* Line judgment panel */}

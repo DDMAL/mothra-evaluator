@@ -8,6 +8,7 @@ import {
   readSegmentationJson,
   loadImageUrl,
   isFsaSupported,
+  renderImageFile,
 } from './data/projectLoader'
 import type { ProjectHandle } from './data/projectLoader'
 import { adaptKrakenJson } from './data/segmentationAdapter'
@@ -43,6 +44,7 @@ export default function App() {
   const redoStack = useRef<EvalStore[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevImageUrl = useRef<string | null>(null)
+  const singleFileStemRef = useRef<string | null>(null)
 
   // ── Save helpers ────────────────────────────────────────────────────────────
 
@@ -72,7 +74,11 @@ export default function App() {
         if (undoStack.current.length > 50) undoStack.current.shift()
         redoStack.current = []
         const next = updater(prev)
-        if (project) scheduleSave(next, project.dirHandle)
+        if (project) {
+          scheduleSave(next, project.dirHandle)
+        } else if (singleFileStemRef.current) {
+          try { localStorage.setItem(`mothra-eval-${singleFileStemRef.current}`, JSON.stringify(next)) } catch { /* quota */ }
+        }
         return next
       })
     },
@@ -98,6 +104,44 @@ export default function App() {
       if ((e as Error).name !== 'AbortError') {
         setError(String(e))
       }
+    }
+  }, [])
+
+  // ── Upload-based single-file mode ────────────────────────────────────────────
+
+  const openFiles = useCallback(async (imageFile: File, jsonFile: File) => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const raw = JSON.parse(await jsonFile.text())
+      const p = adaptKrakenJson(raw)
+
+      if (prevImageUrl.current) {
+        URL.revokeObjectURL(prevImageUrl.current)
+        prevImageUrl.current = null
+      }
+
+      const { url } = await renderImageFile(imageFile)
+      prevImageUrl.current = url
+
+      const stem = p.folio
+      singleFileStemRef.current = stem
+
+      const saved = localStorage.getItem(`mothra-eval-${stem}`)
+      const evals: EvalStore = saved ? JSON.parse(saved) : emptyStore(stem)
+
+      setProject(null)
+      setStore(evals)
+      setPage(p)
+      setImageUrl(url)
+      setIsFallback(false)
+      setCurrentIdx(0)
+      setSelectedLineId(null)
+    } catch (e: unknown) {
+      setError(String(e))
+    } finally {
+      setLoading(false)
     }
   }, [])
 
@@ -247,6 +291,30 @@ export default function App() {
     [mutateStore],
   )
 
+  const deleteTag = useCallback(
+    (id: string) => {
+      mutateStore(prev => {
+        const tagBank = prev.tagBank.filter(t => t.id !== id)
+        const pages = Object.fromEntries(
+          Object.entries(prev.pages).map(([folio, pageEval]) => [
+            folio,
+            {
+              ...pageEval,
+              lines: Object.fromEntries(
+                Object.entries(pageEval.lines).map(([lineId, lineEval]) => [
+                  lineId,
+                  { ...lineEval, tags: lineEval.tags.filter(tid => tid !== id) },
+                ])
+              ),
+            },
+          ])
+        )
+        return { ...prev, tagBank, pages }
+      })
+    },
+    [mutateStore],
+  )
+
   // ── Undo / redo ──────────────────────────────────────────────────────────────
 
   const undo = useCallback(() => {
@@ -276,8 +344,10 @@ export default function App() {
   }, [store])
 
   const exportJSON = useCallback(() => {
-    downloadString(JSON.stringify(store, null, 2), 'evaluations.json', 'application/json')
-  }, [store])
+    const stem = page?.folio ?? singleFileStemRef.current
+    const filename = stem ? `${stem}_evaluations.json` : 'evaluations.json'
+    downloadString(JSON.stringify(store, null, 2), filename, 'application/json')
+  }, [store, page])
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 
@@ -340,19 +410,6 @@ export default function App() {
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
-  if (!isFsaSupported()) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-gray-900 text-gray-100 p-8">
-        <div className="max-w-sm text-center space-y-3">
-          <p className="text-lg font-medium">Browser not supported</p>
-          <p className="text-sm text-gray-400">
-            mothra-evaluator requires the File System Access API, available in Chrome 86+ and Edge 86+. Safari is not supported.
-          </p>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-gray-100 overflow-hidden">
       <TopBar
@@ -367,8 +424,8 @@ export default function App() {
         onExportJSON={exportJSON}
       />
 
-      {!project ? (
-        <WelcomeScreen onOpen={openProject} error={error} />
+      {!project && !page ? (
+        <WelcomeScreen onOpen={openProject} onOpenFiles={openFiles} error={error} />
       ) : loading ? (
         <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
           Loading…
@@ -381,10 +438,12 @@ export default function App() {
             isFallbackImage={isFallback}
             selectedLineId={selectedLineId}
             showLabels={showLabels}
+            lineEvals={page?.folio ? (store.pages[page.folio]?.lines ?? {}) : {}}
+            tagBank={store.tagBank}
             onSelectLine={setSelectedLineId}
           />
           <RightPanel
-            folioStems={project.folioStems}
+            folioStems={project?.folioStems ?? (page?.folio ? [page.folio] : [])}
             currentIdx={currentIdx}
             page={page}
             store={store}
@@ -409,6 +468,7 @@ export default function App() {
           onArchiveTag={archiveTag}
           onUnarchiveTag={unarchiveTag}
           onSetTagColor={setTagColor}
+          onDeleteTag={deleteTag}
         />
       )}
 
@@ -417,29 +477,102 @@ export default function App() {
   )
 }
 
-function WelcomeScreen({ onOpen, error }: { onOpen: () => void; error: string | null }) {
+function WelcomeScreen({
+  onOpen,
+  onOpenFiles,
+  error,
+}: {
+  onOpen: () => void
+  onOpenFiles: (imageFile: File, jsonFile: File) => void
+  error: string | null
+}) {
+  const [uploadMode, setUploadMode] = useState(false)
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [jsonFile, setJsonFile] = useState<File | null>(null)
+  const fsaSupported = isFsaSupported()
+
   return (
     <div className="flex-1 flex flex-col items-center justify-center bg-gray-900 gap-6 p-8">
       <div className="text-center space-y-2">
         <h1 className="text-2xl font-semibold text-gray-100">mothra-evaluator</h1>
         <p className="text-sm text-gray-400 max-w-xs">
-          Evaluate Kraken line segmentation on manuscript folios. Open your{' '}
-          <code className="bg-gray-700 px-1 rounded text-xs">mothra-text</code> project folder to begin.
+          Evaluate Kraken BLLA line segmentation on manuscript folios.
         </p>
       </div>
-      <button
-        onClick={onOpen}
-        className="px-6 py-2.5 bg-purple-700 hover:bg-purple-600 text-white text-sm font-medium rounded-lg transition-colors"
-      >
-        Open project folder
-      </button>
+
+      {!uploadMode ? (
+        <div className="flex flex-col items-center gap-3">
+          {fsaSupported && (
+            <button
+              onClick={onOpen}
+              className="px-6 py-2.5 bg-purple-700 hover:bg-purple-600 text-white text-sm font-medium rounded-lg transition-colors w-56"
+            >
+              Open project folder
+            </button>
+          )}
+          <button
+            onClick={() => setUploadMode(true)}
+            className="px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium rounded-lg transition-colors w-56"
+          >
+            Upload image + JSON
+          </button>
+          {fsaSupported ? (
+            <p className="text-xs text-gray-600 max-w-xs text-center">
+              "Open project folder" requires the full mothra-text repo and Chrome/Edge.
+              "Upload image + JSON" works in any browser.
+            </p>
+          ) : (
+            <p className="text-xs text-gray-500 max-w-xs text-center">
+              Upload a folio image and its <code className="bg-gray-700 px-1 rounded">_kraken.json</code> segmentation file to begin.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 w-72">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-gray-400">Folio image (JPG, PNG, or PDF)</span>
+            <input
+              type="file"
+              accept="image/*,.pdf"
+              onChange={e => setImageFile(e.target.files?.[0] ?? null)}
+              className="text-xs text-gray-300 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-gray-700 file:text-gray-200 hover:file:bg-gray-600"
+            />
+            {imageFile && <span className="text-xs text-gray-500 truncate">{imageFile.name}</span>}
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-gray-400">Segmentation file (_kraken.json)</span>
+            <input
+              type="file"
+              accept=".json,application/json"
+              onChange={e => setJsonFile(e.target.files?.[0] ?? null)}
+              className="text-xs text-gray-300 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-gray-700 file:text-gray-200 hover:file:bg-gray-600"
+            />
+            {jsonFile && <span className="text-xs text-gray-500 truncate">{jsonFile.name}</span>}
+          </label>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setUploadMode(false)}
+              className="flex-1 py-2 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+            >
+              Back
+            </button>
+            <button
+              onClick={() => imageFile && jsonFile && onOpenFiles(imageFile, jsonFile)}
+              disabled={!imageFile || !jsonFile}
+              className="flex-1 py-2 text-xs bg-purple-700 hover:bg-purple-600 disabled:opacity-40 text-white rounded font-medium transition-colors"
+            >
+              Begin evaluation
+            </button>
+          </div>
+          <p className="text-xs text-gray-600 text-center">
+            Evaluations are saved in your browser. Use "Download JSON" to export when done.
+          </p>
+        </div>
+      )}
+
       {error && (
         <p className="text-xs text-red-400 max-w-sm text-center">{error}</p>
       )}
-      <p className="text-xs text-gray-600 max-w-xs text-center">
-        Requires Chrome or Edge. The folder picker will ask for read/write permission
-        so evaluations can be saved automatically.
-      </p>
     </div>
   )
 }

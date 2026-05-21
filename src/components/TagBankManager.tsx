@@ -9,6 +9,7 @@ interface Props {
   onArchiveTag: (id: string) => void
   onUnarchiveTag: (id: string) => void
   onSetTagColor: (id: string, color: string) => void
+  onDeleteTag: (id: string) => void
 }
 
 const PRESET_COLORS = [
@@ -16,12 +17,13 @@ const PRESET_COLORS = [
   '#ef4444', '#06b6d4', '#f97316', '#ec4899',
 ]
 
-export function TagBankManager({ tags, onClose, onAddTag, onRenameTag, onArchiveTag, onUnarchiveTag, onSetTagColor }: Props) {
+export function TagBankManager({ tags, onClose, onAddTag, onRenameTag, onArchiveTag, onUnarchiveTag, onSetTagColor, onDeleteTag }: Props) {
   const [newName, setNewName] = useState('')
   const [newColor, setNewColor] = useState(PRESET_COLORS[0])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [showArchived, setShowArchived] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const active = tags.filter(t => !t.archived)
   const archived = tags.filter(t => t.archived)
@@ -138,11 +140,28 @@ export function TagBankManager({ tags, onClose, onAddTag, onRenameTag, onArchive
 
                   <button
                     onClick={() => onArchiveTag(tag.id)}
-                    className="text-xs text-gray-500 hover:text-red-400 transition-colors"
+                    className="text-xs text-gray-500 hover:text-yellow-400 transition-colors"
                     title="Archive tag"
                   >
                     Archive
                   </button>
+                  {confirmDeleteId === tag.id ? (
+                    <button
+                      onClick={() => { onDeleteTag(tag.id); setConfirmDeleteId(null) }}
+                      className="text-xs text-red-400 hover:text-red-300 font-semibold transition-colors"
+                      title="Click again to confirm deletion"
+                    >
+                      Confirm
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteId(tag.id)}
+                      className="text-xs text-gray-500 hover:text-red-400 transition-colors"
+                      title="Delete tag permanently"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>

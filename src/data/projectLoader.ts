@@ -1,5 +1,9 @@
+import * as pdfjsLib from 'pdfjs-dist'
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import type { EvalStore } from '../types'
 import { emptyStore } from '../types'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl as string
 
 export interface ProjectHandle {
   dirHandle: FileSystemDirectoryHandle
@@ -108,4 +112,34 @@ export async function saveEvaluations(
 
 export function isFsaSupported(): boolean {
   return typeof (window as any).showDirectoryPicker === 'function'
+}
+
+/** Render an uploaded image or PDF file to a blob URL + pixel dimensions. */
+export async function renderImageFile(
+  file: File,
+): Promise<{ url: string; width: number; height: number }> {
+  if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+    const arrayBuffer = await file.arrayBuffer()
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise
+    const pdfPage = await pdf.getPage(1)
+    const viewport = pdfPage.getViewport({ scale: 2 })
+    const canvas = document.createElement('canvas')
+    canvas.width = viewport.width
+    canvas.height = viewport.height
+    await pdfPage.render({ canvas, viewport }).promise
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(blob => {
+        if (blob) resolve({ url: URL.createObjectURL(blob), width: viewport.width, height: viewport.height })
+        else reject(new Error('Canvas toBlob failed'))
+      }, 'image/png')
+    })
+  } else {
+    const url = URL.createObjectURL(file)
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve({ url, width: img.naturalWidth, height: img.naturalHeight })
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load image')) }
+      img.src = url
+    })
+  }
 }
