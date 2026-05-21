@@ -47,6 +47,7 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
     lineEvalsRef.current = lineEvals
     tagBankRef.current = tagBank
     updateStyles()
+    updateTagDots()
     if (viewerRef.current) repositionTagDots(viewerRef.current)
   }, [lineEvals, tagBank])
 
@@ -66,7 +67,6 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
       poly.setAttribute('stroke-width', '1.5')
       poly.setAttribute('stroke-dasharray', eval_?.noteworthy ? '6 3' : 'none')
     })
-    updateTagDots()
   }
 
   function updateTagDots() {
