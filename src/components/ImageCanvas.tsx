@@ -238,54 +238,52 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineIds, 
         onSelectLines(clickedId !== null ? [clickedId] : [])
       })
 
-      // Shift+drag rubber-band multi-select
-      const el = containerRef.current!
+      // Shift+drag rubber-band multi-select via OSD events so we can suppress panning
+      type OSDDragEvent = { position: OpenSeadragon.Point; preventDefaultAction: boolean; originalEvent: Event }
+      type OSDPressEvent = { position: OpenSeadragon.Point; originalEvent: MouseEvent }
 
-      const onMouseDown = (e: MouseEvent) => {
-        if (!e.shiftKey) return
-        e.preventDefault()
-        if (!viewer.viewport) return
-        const pt = viewer.viewport.viewerElementToImageCoordinates(
-          new OpenSeadragon.Point(e.offsetX, e.offsetY)
-        )
-        dragAnchorRef.current = { x: pt.x, y: pt.y }
+      viewer.addHandler('canvas-press', (event: unknown) => {
+        const e = event as OSDPressEvent
+        if (!e.originalEvent.shiftKey) return
+        dragAnchorRef.current = { x: e.position.x, y: e.position.y }
         const rb = rubberBandRef.current
         if (rb) {
           rb.style.display = ''
-          rb.setAttribute('x', String(e.offsetX))
-          rb.setAttribute('y', String(e.offsetY))
+          rb.setAttribute('x', String(e.position.x))
+          rb.setAttribute('y', String(e.position.y))
           rb.setAttribute('width', '0')
           rb.setAttribute('height', '0')
         }
-      }
+      })
 
-      const onMouseMove = (e: MouseEvent) => {
-        if (!dragAnchorRef.current || !rubberBandRef.current || !viewer.viewport) return
-        const anchor = viewer.viewport.imageToViewerElementCoordinates(
-          new OpenSeadragon.Point(dragAnchorRef.current.x, dragAnchorRef.current.y)
-        )
+      viewer.addHandler('canvas-drag', (event: unknown) => {
+        if (!dragAnchorRef.current) return
+        const e = event as OSDDragEvent
+        e.preventDefaultAction = true  // suppress OSD panning
         const rb = rubberBandRef.current
-        const x = Math.min(anchor.x, e.offsetX)
-        const y = Math.min(anchor.y, e.offsetY)
+        if (!rb) return
+        const anchor = dragAnchorRef.current
+        const x = Math.min(anchor.x, e.position.x)
+        const y = Math.min(anchor.y, e.position.y)
         rb.setAttribute('x', String(x))
         rb.setAttribute('y', String(y))
-        rb.setAttribute('width', String(Math.abs(e.offsetX - anchor.x)))
-        rb.setAttribute('height', String(Math.abs(e.offsetY - anchor.y)))
-      }
+        rb.setAttribute('width', String(Math.abs(e.position.x - anchor.x)))
+        rb.setAttribute('height', String(Math.abs(e.position.y - anchor.y)))
+      })
 
-      const onMouseUp = (e: MouseEvent) => {
+      viewer.addHandler('canvas-release', (event: unknown) => {
         if (!dragAnchorRef.current) return
+        const e = event as OSDPressEvent
         const anchor = dragAnchorRef.current
         dragAnchorRef.current = null
         if (rubberBandRef.current) rubberBandRef.current.style.display = 'none'
-        if (!viewer.viewport) return
 
-        const pt = viewer.viewport.viewerElementToImageCoordinates(
-          new OpenSeadragon.Point(e.offsetX, e.offsetY)
+        const anchorImg = viewer.viewport.viewerElementToImageCoordinates(
+          new OpenSeadragon.Point(anchor.x, anchor.y)
         )
-        const x1 = Math.min(anchor.x, pt.x), x2 = Math.max(anchor.x, pt.x)
-        const y1 = Math.min(anchor.y, pt.y), y2 = Math.max(anchor.y, pt.y)
-        // Ignore tiny drags (treat as clicks, handled by canvas-click)
+        const endImg = viewer.viewport.viewerElementToImageCoordinates(e.position)
+        const x1 = Math.min(anchorImg.x, endImg.x), x2 = Math.max(anchorImg.x, endImg.x)
+        const y1 = Math.min(anchorImg.y, endImg.y), y2 = Math.max(anchorImg.y, endImg.y)
         if (x2 - x1 < 5 && y2 - y1 < 5) return
 
         const hit: number[] = []
@@ -297,18 +295,7 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineIds, 
             hit.push(line.id)
         }
         if (hit.length > 0) onSelectLines(hit)
-      }
-
-      el.addEventListener('mousedown', onMouseDown)
-      el.addEventListener('mousemove', onMouseMove)
-      el.addEventListener('mouseup', onMouseUp)
-
-      return () => {
-        el.removeEventListener('mousedown', onMouseDown)
-        el.removeEventListener('mousemove', onMouseMove)
-        el.removeEventListener('mouseup', onMouseUp)
-        viewer.destroy()
-      }
+      })
     }
 
     return () => {
