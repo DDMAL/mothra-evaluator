@@ -33,7 +33,7 @@ export default function App() {
   const [isFallback, setIsFallback] = useState(false)
   const [loading, setLoading] = useState(false)
   const [store, setStore] = useState<EvalStore>(emptyStore())
-  const [selectedLineId, setSelectedLineId] = useState<number | null>(null)
+  const [selectedLineIds, setSelectedLineIds] = useState<number[]>([])
   const [showLabels, setShowLabels] = useState(false)
   const [showTagBank, setShowTagBank] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
@@ -98,7 +98,7 @@ export default function App() {
       setProject(handle)
       setStore(evals)
       setCurrentIdx(0)
-      setSelectedLineId(null)
+      setSelectedLineIds([])
       setError(null)
     } catch (e: unknown) {
       if ((e as Error).name !== 'AbortError') {
@@ -137,7 +137,7 @@ export default function App() {
       setImageUrl(url)
       setIsFallback(false)
       setCurrentIdx(0)
-      setSelectedLineId(null)
+      setSelectedLineIds([])
     } catch (e: unknown) {
       setError(String(e))
     } finally {
@@ -154,7 +154,7 @@ export default function App() {
       if (!stem) return
 
       setLoading(true)
-      setSelectedLineId(null)
+      setSelectedLineIds([])
 
       // Revoke old blob URL
       if (prevImageUrl.current) {
@@ -372,27 +372,30 @@ export default function App() {
       } else if (e.key === ']') {
         if (currentIdx < stems.length - 1) gotoFolio(currentIdx + 1)
       } else if (e.key === 'ArrowUp' || e.key === 'k') {
-        if (page && selectedLineId !== null) {
-          const idx = page.lines.findIndex(l => l.id === selectedLineId)
-          if (idx > 0) setSelectedLineId(page.lines[idx - 1].id)
+        const singleId = selectedLineIds.length === 1 ? selectedLineIds[0] : null
+        if (page && singleId !== null) {
+          const idx = page.lines.findIndex(l => l.id === singleId)
+          if (idx > 0) setSelectedLineIds([page.lines[idx - 1].id])
         } else if (page && page.lines.length > 0) {
-          setSelectedLineId(page.lines[page.lines.length - 1].id)
+          setSelectedLineIds([page.lines[page.lines.length - 1].id])
         }
       } else if (e.key === 'ArrowDown' || e.key === 'j') {
-        if (page && selectedLineId !== null) {
-          const idx = page.lines.findIndex(l => l.id === selectedLineId)
-          if (idx < page.lines.length - 1) setSelectedLineId(page.lines[idx + 1].id)
+        const singleId = selectedLineIds.length === 1 ? selectedLineIds[0] : null
+        if (page && singleId !== null) {
+          const idx = page.lines.findIndex(l => l.id === singleId)
+          if (idx < page.lines.length - 1) setSelectedLineIds([page.lines[idx + 1].id])
         } else if (page && page.lines.length > 0) {
-          setSelectedLineId(page.lines[0].id)
+          setSelectedLineIds([page.lines[0].id])
         }
       } else if (e.key === 'Escape') {
-        setSelectedLineId(null)
+        setSelectedLineIds([])
       } else if (e.key === 'n' || e.key === '*') {
-        if (selectedLineId !== null) {
+        const singleId = selectedLineIds.length === 1 ? selectedLineIds[0] : null
+        if (singleId !== null) {
           const folio = page?.folio
           if (folio) {
-            const cur = store.pages[folio]?.lines[String(selectedLineId)]?.noteworthy ?? false
-            updateLineEval(selectedLineId, { noteworthy: !cur })
+            const cur = store.pages[folio]?.lines[String(singleId)]?.noteworthy ?? false
+            updateLineEval(singleId, { noteworthy: !cur })
           }
         }
       } else if (e.key === 'c' || e.key === 'C') {
@@ -406,7 +409,7 @@ export default function App() {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [project, currentIdx, page, selectedLineId, store, gotoFolio, updateLineEval, markComplete, undo, redo])
+  }, [project, currentIdx, page, selectedLineIds, store, gotoFolio, updateLineEval, markComplete, undo, redo])
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -436,20 +439,20 @@ export default function App() {
             page={page}
             imageUrl={imageUrl}
             isFallbackImage={isFallback}
-            selectedLineId={selectedLineId}
+            selectedLineIds={selectedLineIds}
             showLabels={showLabels}
             lineEvals={page?.folio ? (store.pages[page.folio]?.lines ?? {}) : {}}
             tagBank={store.tagBank}
-            onSelectLine={setSelectedLineId}
+            onSelectLines={setSelectedLineIds}
           />
           <RightPanel
             folioStems={project?.folioStems ?? (page?.folio ? [page.folio] : [])}
             currentIdx={currentIdx}
             page={page}
             store={store}
-            selectedLineId={selectedLineId}
+            selectedLineIds={selectedLineIds}
             onGoto={gotoFolio}
-            onSelectLine={setSelectedLineId}
+            onClearSelection={() => setSelectedLineIds([])}
             onUpdateLineEval={updateLineEval}
             onUpdatePageComment={updatePageComment}
             onMarkComplete={markComplete}

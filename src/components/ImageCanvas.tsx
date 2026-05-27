@@ -6,11 +6,11 @@ interface Props {
   page: CanonicalPage | null
   imageUrl: string | null
   isFallbackImage: boolean  // true = visualization JPG with overlays already baked in
-  selectedLineId: number | null
+  selectedLineIds: number[]
   showLabels: boolean
   lineEvals: Record<string, LineEval>
   tagBank: Tag[]
-  onSelectLine: (id: number | null) => void
+  onSelectLines: (ids: number[]) => void
 }
 
 const LINE_COLOR = 'rgba(180, 60, 255, 0.15)'
@@ -19,17 +19,19 @@ const SEL_COLOR = 'rgba(220, 100, 255, 0.40)'
 const SEL_STROKE = 'rgb(240, 140, 255)'
 const LABEL_COLOR = '#e9b8ff'
 
-export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, showLabels, lineEvals, tagBank, onSelectLine }: Props) {
+export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineIds, showLabels, lineEvals, tagBank, onSelectLines }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const viewerRef = useRef<OpenSeadragon.Viewer | null>(null)
   const polyMapRef = useRef<Map<number, SVGPolygonElement>>(new Map())
   const labelMapRef = useRef<Map<number, SVGTextElement>>(new Map())
   const tagDotMapRef = useRef<Map<number, SVGGElement>>(new Map())
-  const selRef = useRef<number | null>(selectedLineId)
+  const selRef = useRef<Set<number>>(new Set())
   const linesRef = useRef<CanonicalLine[]>([])
   const lineEvalsRef = useRef<Record<string, LineEval>>(lineEvals)
   const tagBankRef = useRef<Tag[]>(tagBank)
+  const dragAnchorRef = useRef<{ x: number; y: number } | null>(null)
+  const rubberBandRef = useRef<SVGRectElement | null>(null)
 
   // Keep linesRef current so canvas-click handler never uses stale lines
   useEffect(() => {
@@ -38,9 +40,9 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
 
   // Keep selRef in sync
   useEffect(() => {
-    selRef.current = selectedLineId
+    selRef.current = new Set(selectedLineIds)
     updateStyles()
-  }, [selectedLineId])
+  }, [selectedLineIds])
 
   // Update polygon colors and tag dots when evals or tags change
   useEffect(() => {
@@ -53,7 +55,7 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
 
   function updateStyles() {
     polyMapRef.current.forEach((poly, id) => {
-      const sel = id === selRef.current
+      const sel = selRef.current.has(id)
       if (sel) {
         poly.setAttribute('fill', SEL_COLOR)
         poly.setAttribute('stroke', SEL_STROKE)
@@ -142,6 +144,17 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
       svg.appendChild(group)
       tagDotMapRef.current.set(line.id, group)
     })
+
+    // Rubber-band selection rectangle (hidden until shift+drag)
+    const rb = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    rb.setAttribute('fill', 'rgba(180,60,255,0.08)')
+    rb.setAttribute('stroke', 'rgb(180,60,255)')
+    rb.setAttribute('stroke-width', '1.5')
+    rb.setAttribute('stroke-dasharray', '4 3')
+    rb.style.display = 'none'
+    rb.style.pointerEvents = 'none'
+    svg.appendChild(rb)
+    rubberBandRef.current = rb
   }
 
   function repositionOverlay(viewer: OpenSeadragon.Viewer, lines: CanonicalLine[]) {
@@ -222,8 +235,80 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
             break
           }
         }
-        onSelectLine(clickedId)
+        onSelectLines(clickedId !== null ? [clickedId] : [])
       })
+
+      // Shift+drag rubber-band multi-select
+      const el = containerRef.current!
+
+      const onMouseDown = (e: MouseEvent) => {
+        if (!e.shiftKey) return
+        e.preventDefault()
+        if (!viewer.viewport) return
+        const pt = viewer.viewport.viewerElementToImageCoordinates(
+          new OpenSeadragon.Point(e.offsetX, e.offsetY)
+        )
+        dragAnchorRef.current = { x: pt.x, y: pt.y }
+        const rb = rubberBandRef.current
+        if (rb) {
+          rb.style.display = ''
+          rb.setAttribute('x', String(e.offsetX))
+          rb.setAttribute('y', String(e.offsetY))
+          rb.setAttribute('width', '0')
+          rb.setAttribute('height', '0')
+        }
+      }
+
+      const onMouseMove = (e: MouseEvent) => {
+        if (!dragAnchorRef.current || !rubberBandRef.current || !viewer.viewport) return
+        const anchor = viewer.viewport.imageToViewerElementCoordinates(
+          new OpenSeadragon.Point(dragAnchorRef.current.x, dragAnchorRef.current.y)
+        )
+        const rb = rubberBandRef.current
+        const x = Math.min(anchor.x, e.offsetX)
+        const y = Math.min(anchor.y, e.offsetY)
+        rb.setAttribute('x', String(x))
+        rb.setAttribute('y', String(y))
+        rb.setAttribute('width', String(Math.abs(e.offsetX - anchor.x)))
+        rb.setAttribute('height', String(Math.abs(e.offsetY - anchor.y)))
+      }
+
+      const onMouseUp = (e: MouseEvent) => {
+        if (!dragAnchorRef.current) return
+        const anchor = dragAnchorRef.current
+        dragAnchorRef.current = null
+        if (rubberBandRef.current) rubberBandRef.current.style.display = 'none'
+        if (!viewer.viewport) return
+
+        const pt = viewer.viewport.viewerElementToImageCoordinates(
+          new OpenSeadragon.Point(e.offsetX, e.offsetY)
+        )
+        const x1 = Math.min(anchor.x, pt.x), x2 = Math.max(anchor.x, pt.x)
+        const y1 = Math.min(anchor.y, pt.y), y2 = Math.max(anchor.y, pt.y)
+        // Ignore tiny drags (treat as clicks, handled by canvas-click)
+        if (x2 - x1 < 5 && y2 - y1 < 5) return
+
+        const hit: number[] = []
+        for (const line of linesRef.current) {
+          if (!line.boundary) continue
+          const xs = line.boundary.map(([x]) => x)
+          const ys = line.boundary.map(([, y]) => y)
+          if (rectsOverlap(x1, y1, x2, y2, Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)))
+            hit.push(line.id)
+        }
+        if (hit.length > 0) onSelectLines(hit)
+      }
+
+      el.addEventListener('mousedown', onMouseDown)
+      el.addEventListener('mousemove', onMouseMove)
+      el.addEventListener('mouseup', onMouseUp)
+
+      return () => {
+        el.removeEventListener('mousedown', onMouseDown)
+        el.removeEventListener('mousemove', onMouseMove)
+        el.removeEventListener('mouseup', onMouseUp)
+        viewer.destroy()
+      }
     }
 
     return () => {
@@ -264,6 +349,10 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
       )}
     </div>
   )
+}
+
+function rectsOverlap(ax1: number, ay1: number, ax2: number, ay2: number, bx1: number, by1: number, bx2: number, by2: number): boolean {
+  return ax1 < bx2 && ax2 > bx1 && ay1 < by2 && ay2 > by1
 }
 
 function pointInPolygon(x: number, y: number, polygon: [number, number][]): boolean {

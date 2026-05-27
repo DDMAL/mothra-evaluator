@@ -7,9 +7,9 @@ interface Props {
   currentIdx: number
   page: CanonicalPage | null
   store: EvalStore
-  selectedLineId: number | null
+  selectedLineIds: number[]
   onGoto: (idx: number) => void
-  onSelectLine: (id: number | null) => void
+  onClearSelection: () => void
   onUpdateLineEval: (lineId: number, patch: Partial<LineEval>) => void
   onUpdatePageComment: (comment: string) => void
   onMarkComplete: () => void
@@ -22,9 +22,9 @@ export function RightPanel({
   currentIdx,
   page,
   store,
-  selectedLineId,
+  selectedLineIds,
   onGoto,
-  onSelectLine,
+  onClearSelection,
   onUpdateLineEval,
   onUpdatePageComment,
   onMarkComplete,
@@ -33,10 +33,20 @@ export function RightPanel({
 }: Props) {
   const folio = page?.folio ?? null
   const pageEval: PageEval = folio ? getPageEval(store, folio) : { status: 'untouched', comment: '', completedAt: null, lines: {} }
-  const lineEval: LineEval = (folio && selectedLineId !== null) ? getLineEval(store, folio, selectedLineId) : emptyLineEval()
+
+  const singleId = selectedLineIds.length === 1 ? selectedLineIds[0] : null
+  const lineEval: LineEval = (folio && singleId !== null) ? getLineEval(store, folio, singleId) : emptyLineEval()
 
   const totalLines = page?.lines.length ?? 0
   const evaluatedCount = Object.values(pageEval.lines).filter(l => l.tags.length > 0 || l.comment).length
+
+  // Tags present on ALL selected lines (intersection) — used for multi-select TagPicker
+  const commonTagIds: string[] = folio && selectedLineIds.length > 1
+    ? store.tagBank
+        .filter(t => !t.archived)
+        .map(t => t.id)
+        .filter(id => selectedLineIds.every(lid => getLineEval(store, folio, lid).tags.includes(id)))
+    : []
 
   const statusColor = (stem: string) => {
     const s = store.pages[stem]?.status
@@ -104,26 +114,31 @@ export function RightPanel({
         <section>
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
             Line judgment
-            {selectedLineId !== null && (
+            {singleId !== null && (
               <span className="ml-1 text-gray-500 normal-case font-normal">
-                — line {selectedLineId}
+                — line {singleId}
+              </span>
+            )}
+            {selectedLineIds.length > 1 && (
+              <span className="ml-1 text-gray-500 normal-case font-normal">
+                — {selectedLineIds.length} lines
               </span>
             )}
           </h3>
 
-          {selectedLineId === null ? (
+          {selectedLineIds.length === 0 ? (
             <p className="text-xs text-gray-500 italic">Click a line on the image to evaluate it.</p>
-          ) : (
+          ) : selectedLineIds.length === 1 ? (
             <div className="space-y-2">
               <TagPicker
                 tags={store.tagBank.filter(t => !t.archived)}
                 selected={lineEval.tags}
-                onChange={tags => onUpdateLineEval(selectedLineId, { tags })}
+                onChange={tags => onUpdateLineEval(singleId!, { tags })}
               />
 
               <textarea
                 value={lineEval.comment}
-                onChange={e => onUpdateLineEval(selectedLineId, { comment: e.target.value })}
+                onChange={e => onUpdateLineEval(singleId!, { comment: e.target.value })}
                 placeholder="Comment on this line…"
                 rows={3}
                 className="w-full text-xs bg-gray-700 border border-gray-600 text-gray-200 rounded px-2 py-1.5 resize-none placeholder-gray-500 focus:outline-none focus:border-purple-500"
@@ -133,17 +148,46 @@ export function RightPanel({
                 <input
                   type="checkbox"
                   checked={lineEval.noteworthy}
-                  onChange={e => onUpdateLineEval(selectedLineId, { noteworthy: e.target.checked })}
+                  onChange={e => onUpdateLineEval(singleId!, { noteworthy: e.target.checked })}
                   className="accent-purple-400"
                 />
                 Noteworthy ★
               </label>
 
               <button
-                onClick={() => onSelectLine(null)}
+                onClick={onClearSelection}
                 className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
               >
                 Deselect line
+              </button>
+            </div>
+          ) : (
+            // Multi-select panel: tags only, applied to all selected lines
+            <div className="space-y-2">
+              <p className="text-xs text-gray-400">
+                Tags highlighted below are on <em>all</em> selected lines. Clicking a tag adds or removes it from all.
+              </p>
+              <TagPicker
+                tags={store.tagBank.filter(t => !t.archived)}
+                selected={commonTagIds}
+                onChange={newCommon => {
+                  const added = newCommon.find(t => !commonTagIds.includes(t))
+                  const removed = commonTagIds.find(t => !newCommon.includes(t))
+                  selectedLineIds.forEach(lid => {
+                    const cur = getLineEval(store, folio!, lid).tags
+                    if (added && !cur.includes(added)) {
+                      onUpdateLineEval(lid, { tags: [...cur, added] })
+                    } else if (removed) {
+                      onUpdateLineEval(lid, { tags: cur.filter(t => t !== removed) })
+                    }
+                  })
+                }}
+              />
+              <button
+                onClick={onClearSelection}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                Clear selection
               </button>
             </div>
           )}
