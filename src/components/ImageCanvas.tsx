@@ -205,6 +205,7 @@ export function ImageCanvas({ page, imageUrl, isFallbackImage, selectedLineId, s
 
     if (!isFallbackImage) {
       rebuildOverlay(linesRef.current)
+      updateTagDots()
 
       viewer.addHandler('open', () => repositionOverlay(viewer, linesRef.current))
       viewer.addHandler('update-viewport', () => repositionOverlay(viewer, linesRef.current))
