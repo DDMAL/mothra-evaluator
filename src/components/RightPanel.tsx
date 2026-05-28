@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import type { CanonicalPage, EvalStore, Tag, LineEval, PageEval } from '../types'
 import { getLineEval, getPageEval, emptyLineEval } from '../types'
 
@@ -48,6 +48,13 @@ export function RightPanel({
         .filter(id => selectedLineIds.every(lid => getLineEval(store, folio, lid).tags.includes(id)))
     : []
 
+  const listRef = useRef<HTMLUListElement>(null)
+
+  useEffect(() => {
+    const el = listRef.current?.children[currentIdx] as HTMLElement | undefined
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [currentIdx])
+
   const statusColor = (stem: string) => {
     const s = store.pages[stem]?.status
     if (s === 'complete') return 'text-green-400'
@@ -81,7 +88,7 @@ export function RightPanel({
               ›
             </button>
           </div>
-          <ul className="max-h-48 overflow-y-auto rounded border border-gray-600 bg-gray-700 divide-y divide-gray-600/50">
+          <ul ref={listRef} className="max-h-48 overflow-y-auto rounded border border-gray-600 bg-gray-700 divide-y divide-gray-600/50">
             {folioStems.map((stem, i) => {
               const s = store.pages[stem]?.status
               const dotColor = s === 'complete' ? '#4ade80' : s === 'in_progress' ? '#facc15' : '#6b7280'
